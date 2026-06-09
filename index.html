@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Integration Calculator</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f5f5f7;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 900px;
+            width: 100%;
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        h1 {
+            text-align: center;
+            color: #1d1d1f;
+            margin-top: 0;
+        }
+        .calculator-layout {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        @media (max-width: 768px) {
+            .calculator-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background: #fbfbfd;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #e3e3e8;
+        }
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #515154;
+        }
+        input, select {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #0071e3;
+            box-shadow: 0 0 0 3px rgba(0,113,227,0.2);
+        }
+        .results {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 2px dashed #e3e3e8;
+        }
+        .result-item {
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+        }
+        .result-value {
+            font-weight: bold;
+            color: #0071e3;
+        }
+        .graph-container {
+            position: relative;
+            min-height: 400px;
+            background: #fff;
+            border: 1px solid #e3e3e8;
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .error {
+            color: #ff3b30;
+            font-size: 0.85rem;
+            margin-top: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Interactive Integration Calculator</h1>
+    
+    <div class="calculator-layout">
+        <div class="controls">
+            <div class="input-group">
+                <label for="functionInput">Function f(x)</label>
+                <input type="text" id="functionInput" value="x^2 - 2*x + 1" placeholder="e.g., x^2, sin(x), Math.sqrt(x)">
+                <div id="errorMsg" class="error">Invalid math expression.</div>
+            </div>
+
+            <div class="input-group">
+                <label for="lowerBound">Lower Bound (a)</label>
+                <input type="number" id="lowerBound" value="0" step="any">
+            </div>
+
+            <div class="input-group">
+                <label for="upperBound">Upper Bound (b)</label>
+                <input type="number" id="upperBound" value="3" step="any">
+            </div>
+
+            <div class="input-group">
+                <label for="intervals">Subintervals (n): <span id="intervalCount">10</span></label>
+                <input type="range" id="intervals" min="2" max="100" value="10" step="1">
+            </div>
+
+            <div class="input-group">
+                <label for="sumType">Riemann Sum Type</label>
+                <select id="sumType">
+                    <option value="left">Left Riemann Sum</option>
+                    <option value="right">Right Riemann Sum</option>
+                    <option value="midpoint" selected>Midpoint Riemann Sum</option>
+                    <option value="trapezoid">Trapezoidal Rule</option>
+                </select>
+            </div>
+
+            <div class="results">
+                <div class="result-item">Approximated Area: <span id="approxResult" class="result-value">0.0000</span></div>
+            </div>
+        </div>
+
+        <div class="graph-container">
+            <canvas id="calculatorGraph"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    let chart;
+    
+    // Elements
+    const functionInput = document.getElementById('functionInput');
+    const lowerBoundInput = document.getElementById('lowerBound');
+    const upperBoundInput = document.getElementById('upperBound');
+    const intervalsInput = document.getElementById('intervals');
+    const intervalCountLabel = document.getElementById('intervalCount');
+    const sumTypeSelect = document.getElementById('sumType');
+    const approxResultDisplay = document.getElementById('approxResult');
+    const errorMsg = document.getElementById('errorMsg');
+
+    // Safely parse and evaluate user math input string
+    function evaluateFunction(x, expr) {
+        // Replace math syntax shortcuts to standard JavaScript Math object calls
+        let parsedExpr = expr
+            .replace(/sin/g, 'Math.sin')
+            .replace(/cos/g, 'Math.cos')
+            .replace(/tan/g, 'Math.tan')
+            .replace(/sqrt/g, 'Math.sqrt')
+            .replace(/exp/g, 'Math.exp')
+            .replace(/ln/g, 'Math.log')
+            .replace(/pi/g, 'Math.PI')
+            .replace(/E/g, 'Math.E');
+
+        // Handle simple power syntax x^2 -> Math.pow(x,2)
+        // Warning: This regex covers simple cases like x^2 or x^3. 
+        parsedExpr = parsedExpr.replace(/x\^(\d+(\.\d+)?)/g, 'Math.pow(x, $1)');
+        
+        // Final fallback replacement for isolated ^ sign if missed by regex
+        parsedExpr = parsedExpr.replace(/\^/g, '**'); 
+
+        // Evaluate expression using a dynamic function context
+        return new Function('x', `with(Math) { return ${parsedExpr}; }`)(x);
+    }
+
+    function calculateIntegration() {
+        errorMsg.style.display = 'none';
+        
+        const expr = functionInput.value;
+        const a = parseFloat(lowerBoundInput.value);
+        const b = parseFloat(upperBoundInput.value);
+        const n = parseInt(intervalsInput.value);
+        const type = sumTypeSelect.value;
+        
+        intervalCountLabel.innerText = n;
+
+        if (isNaN(a) || isNaN(b) || a >= b) {
+            approxResultDisplay.innerText = "Error (check bounds)";
+            return;
+        }
+
+        try {
+            // Test if function evaluates properly
+            evaluateFunction(a, expr);
+        } catch (e) {
+            errorMsg.style.display = 'block';
+            return;
+        }
+
+        const dx = (b - a) / n;
+        let totalArea = 0;
+        
+        // Data formats for the chart visualization
+        let curvePoints = [];
+        let visualizationDatasets = [];
+
+        // 1. Generate smooth background curve data
+        const padding = (b - a) * 0.2; // visual cushion left and right
+        const startX = a - padding;
+        const endX = b + padding;
+        const steps = 150;
+        for (let i = 0; i <= steps; i++) {
+            let curX = startX + (i / steps) * (endX - startX);
+            try {
+                let curY = evaluateFunction(curX, expr);
+                if (!isNaN(curY) && isFinite(curY)) {
+                    curvePoints.push({ x: curX, y: curY });
+                }
+            } catch(e){}
+        }
+
+        // 2. Compute Integration Sum and build Shape Blocks
+        for (let i = 0; i < n; i++) {
+            let xLeft = a + i * dx;
+            let xRight = xLeft + dx;
+            let xEval, yEval;
+
+            if (type === 'left') {
+                xEval = xLeft;
+                yEval = evaluateFunction(xEval, expr);
+                totalArea += yEval * dx;
+                
+                // Rectangle shape points
+                visualizationDatasets.push({
+                    label: '',
+                    data: [{x: xLeft, y: 0}, {x: xLeft, y: yEval}, {x: xRight, y: yEval}, {x: xRight, y: 0}],
+                    borderColor: 'rgba(0, 113, 227, 0.4)',
+                    backgroundColor: 'rgba(0, 113, 227, 0.15)',
+                    fill: true,
+                    showLine: true,
+                    pointRadius: 0,
+                    borderWidth: 1
+                });
+            } else if (type === 'right') {
+                xEval = xRight;
+                yEval = evaluateFunction(xEval, expr);
+                totalArea += yEval * dx;
+
+                visualizationDatasets.push({
+                    label: '',
+                    data: [{x: xLeft, y: 0}, {x: xLeft, y: yEval}, {x: xRight, y: yEval}, {x: xRight, y: 0}],
+                    borderColor: 'rgba(0, 113, 227, 0.4)',
+                    backgroundColor: 'rgba(0, 113, 227, 0.15)',
+                    fill: true,
+                    showLine: true,
+                    pointRadius: 0,
+                    borderWidth: 1
+                });
+            } else if (type === 'midpoint') {
+                xEval = xLeft + (dx / 2);
+                yEval = evaluateFunction(xEval, expr);
+                totalArea += yEval * dx;
+
+                visualizationDatasets.push({
+                    label: '',
+                    data: [{x: xLeft, y: 0}, {x: xLeft, y: yEval}, {x: xRight, y: yEval}, {x: xRight, y: 0}],
+                    borderColor: 'rgba(0, 113, 227, 0.4)',
+                    backgroundColor: 'rgba(0, 113, 227, 0.15)',
+                    fill: true,
+                    showLine: true,
+                    pointRadius: 0,
+                    borderWidth: 1
+                });
+            } else if (type === 'trapezoid') {
+                let yLeft = evaluateFunction(xLeft, expr);
+                let yRight = evaluateFunction(xRight, expr);
+                totalArea += ((yLeft + yRight) / 2) * dx;
+
+                // Trapezoid shape points
+                visualizationDatasets.push({
+                    label: '',
+                    data: [{x: xLeft, y: 0}, {x: xLeft, y: yLeft}, {x: xRight, y: yRight}, {x: xRight, y: 0}],
+                    borderColor: 'rgba(0, 113, 227, 0.4)',
+                    backgroundColor: 'rgba(0, 113, 227, 0.15)',
+                    fill: true,
+                    showLine: true,
+                    pointRadius: 0,
+                    borderWidth: 1
+                });
+            }
+        }
+
+        approxResultDisplay.innerText = totalArea.toFixed(5);
+        updateGraph(curvePoints, visualizationDatasets);
+    }
+
+    function updateGraph(curvePoints, shapes) {
+        const ctx = document.getElementById('calculatorGraph').getContext('2d');
+        
+        // Base function line dataset
+        const mainCurveDataset = {
+            label: `f(x)`,
+            data: curvePoints,
+            borderColor: '#ff453a',
+            borderWidth: 3,
+            fill: false,
+            pointRadius: 0,
+            showLine: true
+        };
+
+        if (chart) {
+            chart.destroy();
+        }
+
+        chart = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [mainCurveDataset, ...shapes]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            // Only show the label for the main mathematical curve
+                            filter: function(item) { return item.text !== ''; }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom',
+                        grid: { color: '#e3e3e8' }
+                    },
+                    y: {
+                        type: 'linear',
+                        grid: { color: '#e3e3e8' }
+                    }
+                },
+                animation: false // Disabled for smooth instant slider feedback
+            }
+        });
+    }
+
+    // Event Listeners for Live Updates
+    [functionInput, lowerBoundInput, upperBoundInput, intervalsInput, sumTypeSelect].forEach(element => {
+        element.addEventListener('input', calculateIntegration);
+    });
+
+    // Initial render
+    calculateIntegration();
+</script>
+
+</body>
+</html>
